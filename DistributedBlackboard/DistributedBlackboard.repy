@@ -1,10 +1,24 @@
+#THIS PROGRAM implements a simple distributed blackboard using Repy and the Seattle framework
 #mycontext implementation of global variables
 mycontext['text_area_comment'] = ''
+mycontext['port_number'] = ''
 mycontext['vessels'] = (['83.230.127.124','192.1.249.137','130.104.72.213','204.85.191.10','128.2.211.115','130.79.48.55','128.208.4.199','128.10.18.53','137.189.98.213'])
 
 #create a list for the ip address of the vessels
 remove_my_ip= mycontext['vessels'].index(getmyip())
 del mycontext['vessels'][remove_my_ip]
+
+def htmlresponse(sockobj, content):
+		htmlresponse= """<html> <head> 
+		<meta content="text/html; charset=utf-8" http-equiv="content-type"> 
+		<title>Blackboard Group 5</title>	</head>	<body><h2> Board Content</h2> 
+		<p>"""+ content+ """</p><br> 
+		<h3>Submit to board<h3> 
+		<textarea rows="4" cols="50" name="comment" form="usrform"></textarea> 
+		<form action="" id="usrform" method="post">	<input type="submit">	</form></body>	</html>"""
+
+		sockobj.send("HTTP/1.1 200 OK\r\nContent-type: text/html\r\n" "Content-length: %i\r\n\r\n%s" % (len(htmlresponse), htmlresponse))
+
 
 #board function definition
 def board(ip, port, sockobj, thiscommhandle, listencommhandle):
@@ -13,16 +27,9 @@ def board(ip, port, sockobj, thiscommhandle, listencommhandle):
 
 	#display this board as a default when the browser is first opened
 	if msgheader.startswith( 'GET' ):
-		htmlresponse = """<html> <head> 
-			<meta content="text/html; charset=utf-8" http-equiv="content-type"> 
-			<title>Blackboard Group 5</title>	</head>	<body><h2> Board Content</h2> 
-			<p>"""+ mycontext['text_area_comment'] + """</p><br> 
-			<h3>Submit to board<h3> 
-			<textarea rows="4" cols="50" name="comment" form="usrform"></textarea> 
-			<form action="" id="usrform" method="post">	<input type="submit">	</form></body>	</html>"""
-			
-		sockobj.send("HTTP/1.1 200 OK\r\nContent-type: text/html\r\n" "Content-length: %i\r\n\r\n%s" % (len(htmlresponse), htmlresponse))
-		stopcomm(thiscommhandle)   
+		htmlresponse(sockobj, mycontext['text_area_comment']) 			
+		stopcomm(thiscommhandle)
+		  
 	
 	#display this board when a post is made.		
 	elif msgheader.startswith( 'POST' ):
@@ -33,20 +40,13 @@ def board(ip, port, sockobj, thiscommhandle, listencommhandle):
 		mycontext['text_area_comment'] += posted_comment + '<br>' 
 		
 		#display the updated mycontxt comment variable in the browser
-		htmlresponse = """<html> <head> 
-			<meta content="text/html; charset=utf-8" http-equiv="content-type"> 
-			<title>Blackboard Group 5</title>	</head>	<body><h2> Board Content</h2> 
-			<p>"""+ mycontext['text_area_comment'] +"""</p><br>
-			<h3>Submit to board<h3> 
-			<textarea rows="4" cols="50" name="comment" form="usrform"></textarea> 
-			<form action="" id="usrform" method="post">	<input type="submit">	</form></body>	</html>"""
-			
-		sockobj.send("HTTP/1.1 200 OK\r\nContent-type: text/html\r\n" + \
-		"Content-length: %i\r\n\r\n%s" % (len(htmlresponse), htmlresponse))
+		htmlresponse(sockobj, mycontext['text_area_comment'])  
+		stopcomm(thiscommhandle)
+
 		
 		#open tcp connection to my neigbors ip address and send the posted comment
 		for i in mycontext['vessels']:
-			sockobject = openconn(i, 63153)
+			sockobject = openconn(i, mycontext['port_number'])
 			sockobject.send(posted_comment)
 
 		stopcomm(thiscommhandle)
@@ -65,13 +65,14 @@ if callfunc == 'initialize':
 	# Running remotely (assuming that we pass input argument only remotely):
 	# whenever this vessel gets a connection on its IPaddress:Clearinghouseport it'll call function board
 	elif len(callargs) == 1:
-		port = int(callargs[0])
+		#port = int(callargs[0])
+		mycontext['port_number'] = int(callargs[0])
 		ip = getmyip()
 
 	# Running locally:
 	# whenever we get a connection on 127.0.0.1:12345 we'll call board
 	else:
-		port = 12345
+		mycontext['port_number'] = 12345
 		ip = '127.0.0.1'
 	
-	listencommhandle = waitforconn(ip,port,board)
+	listencommhandle = waitforconn(ip,mycontext['port_number'], board )
