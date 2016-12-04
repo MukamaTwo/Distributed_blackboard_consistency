@@ -1,0 +1,182 @@
+#This program implements a LEADER ELECTION algorithm for a simple distributed blackboard using Repy and 
+#uses the Seattle framework to run it in distributed vessels
+#========================================================================================================
+
+#mycontext implementation of global variables
+mycontext['text_area_comment']=""
+mycontext['leader_ip']=""
+mycontext['lead_rand_number']=""
+mycontext['my_ip']=getmyip()
+mycontext['my_randomnumber']=int(randomfloat()*100) 
+mycontext['vessels']=['129.97.74.12','192.1.249.137','200.19.159.34','140.247.60.126','108.58.13.205','211.68.70.40','128.208.4.199','193.63.75.20','194.29.178.5','193.191.148.227'] 
+mycontext['accesslock'] = getlock()
+
+#====================================================================================
+#This function creates the leader message and sends it to sendToNeighbour() function
+def propagateLeader():
+  mycontext['my_ip']=getmyip()
+  mycontext['accesslock'].acquire() # acquire the lock
+  message='LEADER:'+mycontext['leader_ip']+':'+mycontext['lead_rand_number']
+  mycontext['accesslock'].release() # release the lock
+  sendToNeighbour(message)
+#==================================================================================
+#This function determines the neigbor and sends a mesg to the neighbor
+def sendToNeighbour(message):
+    ip_index=mycontext['vessels'].index(mycontext['my_ip'])
+    no_of_vessels=len(mycontext['vessels'])
+    #if i am the last in the list, my neighbor is the first in the listmycontext['accesslock']
+    if ip_index==(no_of_vessels-1):
+      my_neighbor=mycontext['vessels'][0]
+    else:
+      my_neighbor=mycontext['vessels'][ip_index + 1] 
+
+    #create a tcp connection and send message
+    mycontext['accesslock'].acquire() # acquire the lock
+    try:
+      socketobject = openconn(my_neighbor,mycontext['port_number'])
+      socketobject.send(message)
+      socketobject.close()
+    except:
+      print 'No connection to neigbor'
+    mycontext['accesslock'].release() # release the lock
+#=====================================================================================
+#commencing the leader election
+def leaderElection():
+  mycontext['my_ip']=getmyip()
+  mycontext['accesslock'].acquire() # acquire the lock
+  #initially i am leder, so i create an election and pass the msg to sendToNeighbour()
+  election_msg='ELECTION:'+mycontext['my_ip']+':'+mycontext['my_ip']+':'+str(mycontext['my_randomnumber'])
+  mycontext['accesslock'].release() # release the lock
+  sendToNeighbour(election_msg)
+
+#=====================================================================================
+#html response to be displayed on the browser
+def response(sockobj,content):
+  mycontext['accesslock'].acquire() # acquire the lock
+  htmlresponse = """<html> <head> 
+    <meta content="text/html; charset=utf-8" http-equiv="content-type"> 
+    <title>Blackboard Group 5</title> </head> <body><h2> Board Content</h2> 
+    <p>"""+ content+ """</p><br> 
+    <h3>Submit to board<h3> 
+    <textarea rows="4" cols="50" name="comment" form="usrform"></textarea> 
+    <form action="" id="usrform" method="post"> <input type="submit"> </form>
+    <h5>Leader IP Address: """+str(mycontext['leader_ip'])+"""</h5>   
+    <h5>Maximum Random Number: """+str(mycontext['lead_rand_number'])+""" </h5> <br> </body>  </html>"""
+  sockobj.send("HTTP/1.1 200 OK\r\nContent-type: text/html\r\n" "Content-length: %i\r\n\r\n%s" % (len(htmlresponse), htmlresponse))
+  mycontext['accesslock'].release() # release the lock
+
+#========================================================================================
+def board(ip, port, sockobj, thiscommhandle, listencommhandle):
+  try:
+    msgheader = sockobj.recv(1024) # Receive message,
+  except:
+    print 'Board did not receive message'
+  # React depending on message type: HTTP GET or POST, or some other type of communication.
+  # GET type, the vessel returns html to browser
+  if msgheader.startswith( 'GET' ):
+    response(sockobj,str(mycontext['text_area_comment']))
+    stopcomm(thiscommhandle)
+
+  # POST type, the vessel sends the submitted message to all the vessels
+  elif msgheader.startswith( 'POST' ):
+    #extract the posted content from the msgheader
+    posted_comment=msgheader[msgheader.find('comment')+8:]
+    response(sockobj,mycontext['text_area_comment'])
+    stopcomm(thiscommhandle)
+    
+    #open tcp connection to the leader and send the posted comment
+    mycontext['accesslock'].acquire() # acquire the lock
+    try:
+      sock = openconn(mycontext['leader_ip'], mycontext['port_number'])
+      sock.send(posted_comment)
+      sock.close()
+    except:
+      print 'Failed to connect to leader'
+    mycontext['accesslock'].release() # release the lock
+
+  # Receive message from vessels's left neighbor
+  elif msgheader.startswith( 'ELECTION' ):
+    message=msgheader.split(":") 
+    stopcomm(thiscommhandle)
+    initiator_ip=message[1] 
+    candidate_ip =message[2]
+    candidate_number=message[3]
+    my_ip=mycontext['my_ip']
+    my_randomnumber=mycontext['my_randomnumber']
+
+    if initiator_ip == my_ip:
+      mycontext['leader_ip']=candidate_ip
+      mycontext['lead_rand_number']=candidate_number
+      # propagate leader's information to right neighbor
+      if mycontext['leader_ip'] is not None:
+        propagateLeader()
+       
+    else:
+      #i am the new candidate to be a leader if my randmom number > received random number from neighbor
+      if int(my_randomnumber) > int(candidate_number):
+        new_elect_msg='ELECTION:'+initiator_ip+':'+my_ip+':'+str(my_randomnumber) 
+        sendToNeighbour(new_elect_msg)
+
+      #else, send the original message  
+      else:
+        sendToNeighbour(msgheader)
+  
+  elif msgheader.startswith('LEADER'):
+    message=msgheader.split(":")
+    stopcomm(thiscommhandle)
+
+    leader_ip=message[1]
+    lead_rand_number=message[2]
+    mycontext['accesslock'].acquire() # acquire the lock
+    mycontext['leader_ip']=leader_ip
+    mycontext['lead_rand_number']=lead_rand_number
+    mycontext['accesslock'].release() # release the lock
+    myip=mycontext['my_ip']
+ 
+  else:
+    message=msgheader
+    stopcomm(thiscommhandle)
+    #if leader, send update to all other vessels
+    if mycontext['my_ip'] == mycontext['leader_ip']:
+      mycontext['accesslock'].acquire() # acquire the lock
+      vessels=mycontext['vessels']
+      # Remove leader's ip from vessels
+      if mycontext['leader_ip'] in vessels:
+        vessels.remove(mycontext['leader_ip'])
+      mycontext['accesslock'].release() # release the lock
+      # update every other vessel 
+      for ip in vessels:
+        mycontext['accesslock'].acquire() # acquire the lock
+        try:
+          socketobject = openconn(ip,mycontext['port_number'])
+          socketobject.send(message)
+          socketobject.close()
+        except:
+          print 'Connection failed'
+        mycontext['accesslock'].release() # release the lock        
+    
+    # Add update to mycontext['text_area_comment'] 
+    mycontext['text_area_comment'] = mycontext['text_area_comment'] +'<br>'+ message
+      
+#====================================================================================
+# program execution starts here 
+if callfunc == 'initialize':
+
+  if len(callargs) > 1:
+    raise Exception("Too many call arguments")
+
+  # Running remotely (assuming that we pass input argument only remotely):
+  # whenever this vessel gets a connection on its IPaddress:Clearinghouseport it'll call function board
+  elif len(callargs) == 1:
+    mycontext['port_number'] = int(callargs[0])
+    ip = getmyip()
+
+  # Running locally:
+  # whenever we get a connection on 127.0.0.1:12345 we'll call board
+  else:
+    mycontext['port_number'] = 12345
+    ip = '127.0.0.1'
+
+  listencommhandle = waitforconn(ip,mycontext['port_number'],board)  
+  sleep(5) 
+  leaderElection()
